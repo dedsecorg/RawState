@@ -115,7 +115,6 @@ function Export-RegKey {
 }
 
 function Export-RegKeyIfExists {
-    # Exports a registry key only if it exists; writes a .absent sentinel otherwise.
     param([Parameter(Mandatory)][string]$KeyPath, [Parameter(Mandatory)][string]$OutFile)
     $query = & reg.exe query $KeyPath 2>&1
     if ($LASTEXITCODE -eq 0) {
@@ -215,8 +214,7 @@ function Invoke-Backup {
     Set-Content -Path (Join-Path $dir 'PowerPlan.guid') -Value $activeGuid -Encoding ASCII
     Write-Status "  [4]  Power plan backed up (GUID: $activeGuid)."
 
-    # [5] BCDEdit - capture current values of the keys we'll touch.
-    #     'default' means the value is absent; Disable will deletevalue to revert cleanly.
+    # [5] BCDEdit - 'default' means value absent; Disable will deletevalue to revert cleanly.
     $bcdRaw = (& bcdedit.exe /enum '{current}') -join "`n"
     @{
         disabledynamictick = if ($bcdRaw -match 'disabledynamictick\s+(\S+)') { $matches[1] } else { 'default' }
@@ -285,7 +283,7 @@ function Invoke-Backup {
         Write-Status '  [14] NIC power management backed up.'
     }
 
-    # [15] netsh TCP global settings (JSON of values we will change)
+    # [15] netsh TCP global settings
     $tcpGlobalRaw = (& netsh.exe int tcp show global) -join "`n"
     $tcpHeuristicsRaw = (& netsh.exe int tcp show heuristics) -join "`n"
     @{
@@ -366,6 +364,7 @@ function Set-MmcssTweaks {
 }
 
 function Set-Win32PriorityTweak {
+    # 0x26 = fixed quantum, max foreground boost, short time slices.
     New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\PriorityControl' `
         -Name 'Win32PrioritySeparation' -Value 0x26 -PropertyType DWord -Force | Out-Null
     Write-Status '  [3]  Win32PrioritySeparation = 0x26.'
@@ -374,14 +373,22 @@ function Set-Win32PriorityTweak {
 
 function Set-PowerTweaks {
     param([switch]$DisableCStates)
+    # Aggressive boost mode (AC + DC)
     Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','sub_processor','PERFBOOSTMODE','2')     | Out-Null
     Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','sub_processor','PERFBOOSTMODE','2')     | Out-Null
+    # Minimum clock floor: 100%
     Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','sub_processor','PROCTHROTTLEMIN','100') | Out-Null
     Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','sub_processor','PROCTHROTTLEMIN','100') | Out-Null
-    Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','sub_pciexpress','ASPM','0')             | Out-Null
-    Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','sub_pciexpress','ASPM','0')             | Out-Null
-    Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','2a737441-1930-4402-8d77-b2bebba308a3','48e6b7a6-50f5-4782-a5d4-53bb8f07e226','0') | Out-Null
-    Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','2a737441-1930-4402-8d77-b2bebba308a3','48e6b7a6-50f5-4782-a5d4-53bb8f07e226','0') | Out-Null
+    # PCI-E ASPM off (sub_pciexpress may be absent on some power plans; non-fatal)
+    try {
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','sub_pciexpress','ASPM','0') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','sub_pciexpress','ASPM','0') | Out-Null
+    } catch { Write-Warning "  Power: ASPM skipped (sub_pciexpress not present on this plan). $_" }
+    # USB selective suspend off (subgroup GUIDs may be absent; non-fatal)
+    try {
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','2a737441-1930-4402-8d77-b2bebba308a3','48e6b7a6-50f5-4782-a5d4-53bb8f07e226','0') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','2a737441-1930-4402-8d77-b2bebba308a3','48e6b7a6-50f5-4782-a5d4-53bb8f07e226','0') | Out-Null
+    } catch { Write-Warning "  Power: USB selective suspend skipped (subgroup not present on this plan). $_" }
     if ($DisableCStates) {
         Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','sub_processor','IDLEDISABLE','1') | Out-Null
         Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','sub_processor','IDLEDISABLE','1') | Out-Null
@@ -394,10 +401,16 @@ function Set-PowerTweaks {
 }
 
 function Set-CoreParkingTweak {
-    Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','sub_processor','CPMINCORES','100') | Out-Null
-    Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','sub_processor','CPMINCORES','100') | Out-Null
-    Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive','scheme_current') | Out-Null
-    Write-Status '  [5]  Core parking disabled (CPMINCORES 100).'
+    # CPMINCORES 100: keeps all CPU cores un-parked at all times.
+    # Distinct from PROCTHROTTLEMIN (clock floor). Particularly relevant on
+    # AMD Ryzen systems where parking can push threads to a less-optimal CCD.
+    # CPMINCORES may be absent in some OEM-stripped power plans; non-fatal.
+    try {
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setacvalueindex','scheme_current','sub_processor','CPMINCORES','100') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setdcvalueindex','scheme_current','sub_processor','CPMINCORES','100') | Out-Null
+        Invoke-Native -File 'powercfg.exe' -Arguments @('/setactive','scheme_current') | Out-Null
+        Write-Status '  [5]  Core parking disabled (CPMINCORES 100).'
+    } catch { Write-Warning "  CoreParking: CPMINCORES not available on this power plan; skipped. $_" }
     return 'CoreParking'
 }
 
@@ -474,6 +487,8 @@ function Set-PowerThrottlingTweak {
 }
 
 function Set-FsoAndGameDvrTweaks {
+    # FSO: force exclusive fullscreen. GameDVR: disable background capture.
+    # Note: Win+G Game Bar and Xbox screenshot capture will be disabled.
     $gameStore = 'HKCU:\System\GameConfigStore'
     if (-not (Test-Path $gameStore)) { New-Item -Path $gameStore -Force | Out-Null }
     New-ItemProperty -Path $gameStore -Name 'GameDVR_DXGIHonorFSEWindowsCompatible' -Value 1 -PropertyType DWord -Force | Out-Null
@@ -503,6 +518,7 @@ function Set-VisualEffectsTweak {
 }
 
 function Set-GlobalTimerTweak {
+    # Windows 11 (build 22000+): allows games' timeBeginPeriod() to affect global timer.
     $winBuild = [System.Environment]::OSVersion.Version.Build
     if ($winBuild -lt 22000) {
         Write-Status '  [13] GlobalTimerResolutionRequests: skipped (not Windows 11).'
@@ -522,9 +538,9 @@ function Set-NetshTcpTweaks {
         @('int','tcp','set','global','autotuninglevel=normal'),
         @('int','tcp','set','heuristics','disabled')
     )
-    foreach ($args in $cmds) {
-        try { Invoke-Native -File 'netsh.exe' -Arguments $args | Out-Null }
-        catch { Write-Warning "netsh $($args -join ' ') failed: $_" }
+    foreach ($cmd in $cmds) {
+        try { Invoke-Native -File 'netsh.exe' -Arguments $cmd | Out-Null }
+        catch { Write-Warning "netsh $($cmd -join ' ') failed: $_" }
     }
     Write-Status '  [14] netsh TCP stack tuned (ECN off, timestamps off, heuristics off).'
     return 'NetshTCP'
