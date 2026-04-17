@@ -10,6 +10,7 @@
 #   pwsh -File .\RawState_v5.ps1 -Mode Enable -EnableMsiMode -DisableSysMain -HardwareGpuScheduling
 #   pwsh -File .\RawState_v5.ps1 -Mode Disable
 #   pwsh -File .\RawState_v5.ps1 -Mode Status -OutputFormat Json
+#   pwsh -File .\RawState_v5.ps1 -Mode Init
 #
 # OpenClaw / Discord bot integration:
 #   Create a Task Scheduler task with "Run with highest privileges" and
@@ -32,7 +33,7 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('Enable','Disable','Toggle','Status')]
+    [ValidateSet('Enable','Disable','Toggle','Status','Init')]
     [string]$Mode = 'Toggle',
 
     [string]$StateRoot = 'C:\RawState',
@@ -115,6 +116,7 @@ function Export-RegKey {
 }
 
 function Export-RegKeyIfExists {
+    # Exports a registry key only if it exists; writes a .absent sentinel otherwise.
     param([Parameter(Mandatory)][string]$KeyPath, [Parameter(Mandatory)][string]$OutFile)
     $query = & reg.exe query $KeyPath 2>&1
     if ($LASTEXITCODE -eq 0) {
@@ -177,6 +179,116 @@ function Emit-Result {
             Write-Host 'NOTE           : Reboot required for BCDEdit / GPU scheduler / MSI mode changes.'
         }
     }
+}
+
+# ====================================================================
+# CONFIG / INIT
+# ====================================================================
+function Get-RawStateConfig {
+    $configFile = Join-Path $StateRoot 'config.json'
+    if (Test-Path $configFile) {
+        return Get-Content $configFile -Raw | ConvertFrom-Json
+    }
+    return $null
+}
+
+function Invoke-Prompt {
+    # Interactive Y/N prompt with a default value.
+    param([string]$Question, [bool]$Default = $false)
+    $hint = if ($Default) { '[Y/n]' } else { '[y/N]' }
+    while ($true) {
+        $ans = Read-Host "  $Question $hint"
+        if ($ans -eq '')              { return $Default }
+        if ($ans -match '^[Yy]')      { return $true    }
+        if ($ans -match '^[Nn]')      { return $false   }
+        Write-Host '  Please enter Y or N.'
+    }
+}
+
+function Apply-Config {
+    # Merges saved config into script-level switches.
+    # Config only applies when the CLI switch was not explicitly provided (i.e. still $false).
+    param($Config)
+    if (-not $Config) { return }
+    if ($Config.disableCStates        -and -not $script:DisableCStates)        { $script:DisableCStates        = $true }
+    if ($Config.isolateNicIrq         -and -not $script:IsolateNicIrq)         { $script:IsolateNicIrq         = $true }
+    if ($null -ne $Config.irqTargetCpu -and $script:IrqTargetCpu -eq 2)        { $script:IrqTargetCpu          = [int]$Config.irqTargetCpu }
+    if ($Config.hardwareGpuScheduling -and -not $script:HardwareGpuScheduling) { $script:HardwareGpuScheduling = $true }
+    if ($Config.enableMsiMode         -and -not $script:EnableMsiMode)         { $script:EnableMsiMode         = $true }
+    if ($Config.disableSysMain        -and -not $script:DisableSysMain)        { $script:DisableSysMain        = $true }
+}
+
+function Invoke-Init {
+    Write-Host ''
+    Write-Host '  ================================================================'
+    Write-Host '  FTS: RawState  |  Setup'
+    Write-Host '  ================================================================'
+    Write-Host '  Opt-in tweaks are OFF by default. Each has trade-offs.'
+    Write-Host '  Read each description before answering.'
+    Write-Host ''
+
+    Write-Host '  [1] C-state Disable'
+    Write-Host '      Forces CPU to hold full clock frequency. On Zen 2+ / Intel 10th-gen+'
+    Write-Host '      this can REDUCE boost headroom and raise idle temps. Only enable'
+    Write-Host '      if you have tested this benefits your specific CPU.'
+    $cstates = Invoke-Prompt 'Enable C-state disable?' $false
+
+    Write-Host ''
+    Write-Host '  [2] NIC IRQ Affinity Pin'
+    Write-Host '      Pins NIC interrupts to a specific logical CPU core via the registry.'
+    Write-Host '      Requires TrustedInstaller key ownership and may silently fail.'
+    Write-Host '      RSS base-processor pinning always applies regardless of this option.'
+    $irq    = Invoke-Prompt 'Enable IRQ affinity pin?' $false
+    $irqCpu = 2
+    if ($irq) {
+        $cpuStr = Read-Host '  Target CPU index (0-63, default 2)'
+        if ($cpuStr -match '\d+' -and [int]$cpuStr -le 63) { $irqCpu = [int]$cpuStr }
+    }
+
+    Write-Host ''
+    Write-Host '  [3] Hardware GPU Scheduling'
+    Write-Host '      Lets the GPU manage its own work queue instead of the CPU driver.'
+    Write-Host '      Requires: Turing (RTX 20xx) / RDNA2 (RX 6000) or newer GPU.'
+    Write-Host '      Windows 10 2004+ required. Reboot required to take effect.'
+    $hags   = Invoke-Prompt 'Enable hardware GPU scheduling?' $false
+
+    Write-Host ''
+    Write-Host '  [4] MSI Interrupt Mode (GPU + NIC)'
+    Write-Host '      Forces Message Signaled Interrupts, eliminating shared IRQ contention.'
+    Write-Host '      Measurable DPC latency reduction. Requires TrustedInstaller access'
+    Write-Host '      on Enum registry keys. Reboot required to take effect.'
+    $msi    = Invoke-Prompt 'Enable MSI mode?' $false
+
+    Write-Host ''
+    Write-Host '  [5] Disable SysMain (Superfetch)'
+    Write-Host '      Stops and disables the prefetch service. No benefit on NVMe SSDs.'
+    Write-Host '      May reduce background I/O pressure on SATA SSD or HDD.'
+    $sysmain = Invoke-Prompt 'Disable SysMain?' $false
+
+    Write-Host ''
+    $remember = Invoke-Prompt 'Save these choices for future runs?' $true
+
+    $config = @{
+        configuredAt          = (Get-Date -Format 'o')
+        rememberSettings      = $remember
+        disableCStates        = $cstates
+        isolateNicIrq         = $irq
+        irqTargetCpu          = $irqCpu
+        hardwareGpuScheduling = $hags
+        enableMsiMode         = $msi
+        disableSysMain        = $sysmain
+    }
+
+    if ($remember) {
+        if (-not (Test-Path $StateRoot)) { New-Item -ItemType Directory -Path $StateRoot | Out-Null }
+        $config | ConvertTo-Json | Set-Content -Path (Join-Path $StateRoot 'config.json') -Encoding UTF8
+        Write-Host ''
+        Write-Host "  Configuration saved -> $StateRoot\config.json"
+        Write-Host "  Run '-Mode Init' at any time to reconfigure."
+    }
+
+    Write-Host ''
+    return [PSCustomObject]$config
 }
 
 # ====================================================================
@@ -589,8 +701,16 @@ function Set-SysMainTweak {
 # ENABLE
 # ====================================================================
 function Invoke-Enable {
-    Write-Status 'RawState: Entering State 1...'
-    Write-Status 'Step 1 of 2: Capturing State 0 snapshot...'
+    # Load saved config. If none found and not running quiet, offer first-time setup.
+    $cfg = Get-RawStateConfig
+    if (-not $cfg -and -not $script:Quiet) {
+        $ans = Read-Host "`n  No RawState configuration found. Run first-time setup? [Y/n]"
+        if ($ans -notmatch '^[Nn]') { $cfg = Invoke-Init }
+    }
+    Apply-Config $cfg
+
+    Write-Status 'RawState: Activating...'
+    Write-Status 'Step 1 of 2: Capturing baseline snapshot...'
     $backupDir = Invoke-Backup
 
     Write-Status 'Step 2 of 2: Applying performance vector...'
@@ -640,7 +760,7 @@ function Invoke-Enable {
 }
 
 # ====================================================================
-# DISABLE  (revert to State 0)
+# DISABLE  (revert to baseline)
 # ====================================================================
 function Invoke-Disable {
     $state = Get-GamingModeState
@@ -648,13 +768,13 @@ function Invoke-Disable {
         throw 'RawState is not currently active. Nothing to revert.'
     }
     $dir = $state.BackupDir
-    if (-not (Test-Path $dir)) { throw "State 0 snapshot not found: $dir" }
+    if (-not (Test-Path $dir)) { throw "Baseline snapshot not found: $dir" }
 
     if (Test-IsSystem) {
         Write-Warning 'Running as SYSTEM: HKCU registry files will restore to the SYSTEM hive. For correct HKCU revert, run as the gaming user.'
     }
 
-    Write-Status 'RawState: Returning to State 0...'
+    Write-Status 'RawState: Reverting to baseline...'
 
     foreach ($f in @('TCP_v4.reg','TCP_v6.reg','MMCSS.reg','PriorityControl.reg','Kernel.reg')) {
         $p = Join-Path $dir $f
@@ -796,10 +916,14 @@ try {
 
     if ($Mode -eq 'Toggle') {
         $Mode = if ($currentModeStr -eq 'Enabled') { 'Disable' } else { 'Enable' }
-        Write-Status "Toggle: State 0/1 flip -> '$Mode'."
+        Write-Status "Toggle: $currentModeStr -> $Mode."
     }
 
     switch ($Mode) {
+        'Init' {
+            Invoke-Init | Out-Null
+            Write-Host '  Setup complete.'
+        }
         'Status' {
             $tweaks = if ($currentState -and $currentState.Tweaks) { $currentState.Tweaks } else { @() }
             $reboot = [bool]($currentState -and $currentState.RebootPending)
@@ -809,17 +933,17 @@ try {
         }
         'Enable' {
             if ($currentModeStr -eq 'Enabled') {
-                Write-Warning 'RawState is already active. Run -Mode Disable first to return to State 0 before re-enabling.'
+                Write-Warning 'RawState is already active. Run -Mode Disable first to revert to baseline before re-enabling.'
             }
             $result = Invoke-Enable
             Emit-Result -Success $true -GamingMode 'Enabled' `
-                -Message 'RawState active. State 1 engaged.' `
+                -Message 'RawState active.' `
                 -AppliedTweaks $result.Tweaks -RequiresReboot $result.Reboot
         }
         'Disable' {
             Invoke-Disable
             Emit-Result -Success $true -GamingMode 'Disabled' `
-                -Message 'State 0 restored. Reboot recommended.' `
+                -Message 'Baseline restored. Reboot recommended.' `
                 -RequiresReboot $true
         }
     }
