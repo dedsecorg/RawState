@@ -30,13 +30,16 @@ your system to the exact pre-run state.
 ## Usage
 
 ```powershell
+# First-time setup wizard (configure opt-in tweaks and save preferences)
+pwsh -File .\RawState_v5.ps1 -Mode Init
+
 # Toggle (reads current state, flips it)
 pwsh -File .\RawState_v5.ps1 -Mode Toggle
 
 # Explicit enable
 pwsh -File .\RawState_v5.ps1 -Mode Enable
 
-# Enable with all opt-in flags
+# Enable with all opt-in flags via CLI
 pwsh -File .\RawState_v5.ps1 -Mode Enable -EnableMsiMode -DisableSysMain -HardwareGpuScheduling
 
 # Revert everything to original state
@@ -45,6 +48,33 @@ pwsh -File .\RawState_v5.ps1 -Mode Disable
 # Check current state (JSON output for bots)
 pwsh -File .\RawState_v5.ps1 -Mode Status -OutputFormat Json
 ```
+
+---
+
+## First-Run Setup
+
+The first time you run `-Mode Enable` or `-Mode Toggle`, RawState checks for
+a saved configuration. If none is found it prompts:
+
+```
+  No RawState configuration found. Run first-time setup? [Y/n]
+```
+
+The setup wizard walks through each opt-in tweak with a plain-language
+description and trade-off warning, then asks whether to save your choices.
+
+You can also trigger setup explicitly at any time:
+
+```powershell
+pwsh -File .\RawState_v5.ps1 -Mode Init
+```
+
+Choices are saved to `C:\RawState\config.json` and automatically loaded on
+every subsequent Enable/Toggle run. CLI flags passed at runtime always
+override saved config. To reconfigure, just run `-Mode Init` again.
+
+> `-Quiet` mode (used by bots) skips the first-run prompt. Run setup
+> manually first when deploying via OpenClaw.
 
 ---
 
@@ -107,7 +137,7 @@ The `-OutputFormat Json -Quiet` flags emit a single compressed JSON object
 to stdout for the bot to parse:
 
 ```json
-{"Success":true,"GamingMode":"Enabled","Message":"RawState active. State 1 engaged.","AppliedTweaks":["TCP","MMCSS","Win32Priority","Power","CoreParking","BCDEdit","NIC","NIC_PowerMgmt","Psched","PowerThrottle","FSO_GameDVR","VisualEffects","NetshTCP"],"RequiresReboot":true}
+{"Success":true,"GamingMode":"Enabled","Message":"RawState active.","AppliedTweaks":["TCP","MMCSS","Win32Priority","Power","CoreParking","BCDEdit","NIC","NIC_PowerMgmt","Psched","PowerThrottle","FSO_GameDVR","VisualEffects","NetshTCP"],"RequiresReboot":true}
 ```
 
 > **Important:** HKCU tweaks (GameDVR, FSO, VisualEffects, GameBar) only

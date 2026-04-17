@@ -1,0 +1,32 @@
+# ============================================================
+# RawState runtime files (generated in C:\RawState\ by default)
+# Covered here in case StateRoot is ever pointed at the repo dir.
+# ============================================================
+
+# Registry backup exports
+*.reg
+
+# Power plan exports
+*.pow
+*.guid
+
+# Absent-key sentinels
+*.absent
+
+# Per-run JSON state and config
+config.json
+gaming_mode_state.json
+BCDEdit.json
+NIC_AdvancedProps.json
+NIC_PowerMgmt.json
+MSI_Devices.json
+netsh_tcp_settings.json
+netsh_tcp_global_raw.txt
+SysMain_State.txt
+
+# Timestamped backup subdirectories (yyyyMMdd-HHmmss format)
+[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]/
+
+# General
+Thumbs.db
+.DS_Store
