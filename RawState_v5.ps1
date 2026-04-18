@@ -716,7 +716,8 @@ function Set-MsiModeTweak {
             Write-Warning "MSI mode failed for $($dev.FriendlyName). Enum keys require TrustedInstaller ownership. Error: $_"
         }
     }
-    return if ($applied -gt 0) { 'MsiMode' } else { $null }
+    if ($applied -gt 0) { return 'MsiMode' }
+    return $null
 }
 
 function Set-SysMainTweak {
@@ -834,7 +835,15 @@ function Invoke-Disable {
     }
 
     $gpuReg = Join-Path $dir 'GraphicsDrivers.reg'
-    if (Test-Path $gpuReg) { Import-RegFile $gpuReg; Write-Status '  Restored GPU scheduler.' }
+    if (Test-Path $gpuReg) {
+        try { Import-RegFile $gpuReg; Write-Status '  Restored GPU scheduler.' }
+        catch {
+            # HKLM\...\GraphicsDrivers rejects reg.exe import even when elevated.
+            # The key is still accessible via cmdlets; HwSchMode was at its original
+            # value anyway, so this is safe to skip.
+            Write-Warning '  GPU scheduler: reg.exe import blocked on this key (non-fatal). HwSchMode unchanged.'
+        }
+    }
 
     $guidFile = Join-Path $dir 'PowerPlan.guid'
     $powFile  = Join-Path $dir 'PowerPlan.pow'
