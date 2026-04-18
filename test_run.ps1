@@ -12,7 +12,9 @@ function Run-Mode {
     $start = Get-Date
     $raw = & pwsh -NoProfile -File $script -Mode $Mode -OutputFormat Json -Quiet @ExtraArgs 2>&1
     $elapsed = ((Get-Date) - $start).TotalSeconds
-    $parsed = try { $raw | ConvertFrom-Json } catch { [PSCustomObject]@{ Success = $false; RawOutput = "$raw" } }
+    # Filter for the JSON line only — Write-Warning output may appear in the array alongside it.
+    $jsonLine = ($raw | Where-Object { $_ -match '^\{' }) -join ''
+    $parsed = try { $jsonLine | ConvertFrom-Json } catch { [PSCustomObject]@{ Success = $false; RawOutput = "$raw" } }
     [PSCustomObject]@{ Result = $parsed; ElapsedSeconds = [math]::Round($elapsed, 1) }
 }
 
