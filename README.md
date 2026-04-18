@@ -105,6 +105,7 @@ override saved config. To reconfigure, just run `-Mode Init` again.
 |------|--------|
 | `-HardwareGpuScheduling` | HwSchMode = 2. Requires Turing/RDNA2+ GPU. Reboot required. |
 | `-EnableMsiMode` | MSI interrupt mode for GPU + NIC. Requires TrustedInstaller access on Enum keys. Reboot required. |
+| `-NicAdvancedTweaks` | Interrupt moderation off, LSO off, flow control off, RSS pin. **Causes a brief internet dropout** while the adapter restarts. On Wi-Fi this may take 30+ seconds. |
 | `-DisableSysMain` | Stops and disables Superfetch. No benefit on NVMe; may help on SATA SSD/HDD. |
 | `-DisableCStates` | Forces static CPU V-F curve. Can reduce boost headroom on Zen 2+ / 10th-gen Intel+. Use with knowledge. |
 | `-IsolateNicIrq` | Full MSI-X IRQ affinity pin on NIC. Requires TrustedInstaller. RSS pinning applies regardless. |

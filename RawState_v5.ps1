@@ -58,6 +58,10 @@ param(
     # Eliminates shared IRQ contention. Requires TrustedInstaller access on Enum keys.
     [switch]$EnableMsiMode,
 
+    # NIC advanced tweaks: interrupt moderation off, LSO off, flow control off, RSS pin.
+    # Causes a brief internet dropout while the NIC adapter restarts. Longer on Wi-Fi.
+    [switch]$NicAdvancedTweaks,
+
     # Disable SysMain (Superfetch). No benefit on NVMe; may help on SATA SSD/HDD.
     [switch]$DisableSysMain,
 
@@ -216,6 +220,7 @@ function Apply-Config {
     if ($null -ne $Config.irqTargetCpu -and $script:IrqTargetCpu -eq 2)        { $script:IrqTargetCpu          = [int]$Config.irqTargetCpu }
     if ($Config.hardwareGpuScheduling -and -not $script:HardwareGpuScheduling) { $script:HardwareGpuScheduling = [switch]$true }
     if ($Config.enableMsiMode         -and -not $script:EnableMsiMode)         { $script:EnableMsiMode         = [switch]$true }
+    if ($Config.nicAdvancedTweaks     -and -not $script:NicAdvancedTweaks)     { $script:NicAdvancedTweaks     = [switch]$true }
     if ($Config.disableSysMain        -and -not $script:DisableSysMain)        { $script:DisableSysMain        = [switch]$true }
 }
 
@@ -267,6 +272,13 @@ function Invoke-Init {
     $sysmain = Invoke-Prompt 'Disable SysMain?' $false
 
     Write-Host ''
+    Write-Host '  [6] NIC Advanced Tweaks (interrupt moderation off, LSO off, flow control off, RSS pin)'
+    Write-Host '      Reduces NIC interrupt overhead and DPC latency.'
+    Write-Host '      WARNING: your internet connection will drop while the adapter restarts.'
+    Write-Host '      On Wi-Fi, reconnection may take 30 seconds or longer.'
+    $nicAdv  = Invoke-Prompt 'Enable NIC advanced tweaks?' $false
+
+    Write-Host ''
     $remember = Invoke-Prompt 'Save these choices for future runs?' $true
 
     $config = @{
@@ -277,6 +289,7 @@ function Invoke-Init {
         irqTargetCpu          = $irqCpu
         hardwareGpuScheduling = $hags
         enableMsiMode         = $msi
+        nicAdvancedTweaks     = $nicAdv
         disableSysMain        = $sysmain
     }
 
@@ -535,23 +548,36 @@ function Set-BcdTweaks {
 }
 
 function Set-NicTweaks {
-    param([switch]$IsolateNicIrq, [int]$IrqTargetCpu)
+    param([switch]$NicAdvancedTweaks, [switch]$IsolateNicIrq, [int]$IrqTargetCpu)
     $adapters = Get-PhysicalAdapters
     if (-not $adapters) { Write-Warning 'No connected physical adapters; skipping NIC tweaks.'; return $null }
-    $keywords = @(
-        @{ Name = '*InterruptModeration'; Value = '0' }
-        @{ Name = '*LsoV2IPv4';           Value = '0' }
-        @{ Name = '*LsoV2IPv6';           Value = '0' }
-        @{ Name = '*FlowControl';         Value = '0' }
-    )
-    foreach ($a in $adapters) {
-        foreach ($kw in $keywords) {
-            try { Set-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $kw.Name -RegistryValue $kw.Value -ErrorAction SilentlyContinue } catch { }
+
+    if ($NicAdvancedTweaks) {
+        Write-Warning '  NIC advanced tweaks: internet/network connection will drop while the adapter restarts. On Wi-Fi this may take 30+ seconds.'
+        $keywords = @(
+            @{ Name = '*InterruptModeration'; Value = '0' }
+            @{ Name = '*LsoV2IPv4';           Value = '0' }
+            @{ Name = '*LsoV2IPv6';           Value = '0' }
+            @{ Name = '*FlowControl';         Value = '0' }
+        )
+        foreach ($a in $adapters) {
+            # Apply all properties first, then do one controlled restart to batch the cycles.
+            foreach ($kw in $keywords) {
+                try { Set-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $kw.Name -RegistryValue $kw.Value -ErrorAction SilentlyContinue } catch { }
+            }
+            try { Set-NetAdapterRss    -Name $a.Name -BaseProcessorNumber $IrqTargetCpu -ErrorAction SilentlyContinue } catch { }
+            try { Enable-NetAdapterRss -Name $a.Name -ErrorAction SilentlyContinue } catch { }
+            try {
+                Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
+                Enable-NetAdapter -Name $a.Name -ErrorAction SilentlyContinue
+            } catch { Write-Warning "  Could not restart adapter '$($a.Name)': $_" }
         }
-        try { Set-NetAdapterRss   -Name $a.Name -BaseProcessorNumber $IrqTargetCpu -ErrorAction SilentlyContinue } catch { }
-        try { Enable-NetAdapterRss -Name $a.Name -ErrorAction SilentlyContinue } catch { }
+        Write-Status "  [7]  NIC advanced tweaks applied (interrupt moderation off, LSO off, flow control off, RSS -> CPU $IrqTargetCpu). Adapter restarted once."
+    } else {
+        Write-Status '  [7]  NIC advanced tweaks skipped (opt-in — run -Mode Init or pass -NicAdvancedTweaks to enable).'
     }
-    Write-Status "  [7]  NIC: interrupt moderation off, LSO off, flow control off, RSS -> CPU $IrqTargetCpu."
+
     if ($IsolateNicIrq) {
         $pnp = Get-PnpDevice -Class Net -Status OK | Where-Object { $_.InstanceId } | Select-Object -First 1
         if ($pnp) {
@@ -725,7 +751,7 @@ function Invoke-Enable {
         (Set-PowerTweaks       -DisableCStates:$script:DisableCStates),
         (Set-CoreParkingTweak),
         (Set-BcdTweaks),
-        (Set-NicTweaks         -IsolateNicIrq:$script:IsolateNicIrq -IrqTargetCpu $script:IrqTargetCpu),
+        (Set-NicTweaks         -NicAdvancedTweaks:$script:NicAdvancedTweaks -IsolateNicIrq:$script:IsolateNicIrq -IrqTargetCpu $script:IrqTargetCpu),
         (Set-NicPowerMgmtTweak),
         (Set-PschedTweak),
         (Set-PowerThrottlingTweak),
