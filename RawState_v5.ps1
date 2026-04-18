@@ -1,3 +1,4 @@
+#Requires -Version 7.0
 # ====================================================================
 # FTS: RawState  |  Gaming Mode Toggle  |  Build v5.0 (Performance)
 # ====================================================================
@@ -121,13 +122,23 @@ function Export-RegKey {
 
 function Export-RegKeyIfExists {
     # Exports a registry key only if it exists; writes a .absent sentinel otherwise.
+    # Also catches export failures (e.g. key exists but is unreadable) non-fatally.
     param([Parameter(Mandatory)][string]$KeyPath, [Parameter(Mandatory)][string]$OutFile)
+    $absentFile = [IO.Path]::ChangeExtension($OutFile, '.absent')
     $query = & reg.exe query $KeyPath 2>&1
     if ($LASTEXITCODE -eq 0) {
-        Export-RegKey $KeyPath $OutFile
-        return $true
+        try {
+            Export-RegKey $KeyPath $OutFile
+            return $true
+        } catch {
+            # Key exists but could not be exported (permissions, empty key, etc.).
+            # Treat as absent so the backup does not abort.
+            Set-Content -Path $absentFile -Value '' -Encoding ASCII
+            Write-Warning "  Backup: could not export $KeyPath (treating as absent). $_"
+            return $false
+        }
     } else {
-        Set-Content -Path ([IO.Path]::ChangeExtension($OutFile, '.absent')) -Value '' -Encoding ASCII
+        Set-Content -Path $absentFile -Value '' -Encoding ASCII
         return $false
     }
 }
