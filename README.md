@@ -4,6 +4,8 @@
 > *Competitive latency reduction and OS de-bloating for Windows.*
 > *No subscriptions. No telemetry. No black box. Just the raw state.*
 
+> **Tested:** full Enable → Disable cycle verified stable, no network disruption on default settings.
+
 ---
 
 ## What it does
@@ -90,14 +92,14 @@ override saved config. To reconfigure, just run `-Mode Init` again.
 | 4 | Power: aggressive boost, min 100%, ASPM off, USB suspend off | powercfg |
 | 5 | Core parking disabled | powercfg (CPMINCORES 100) |
 | 6 | BCDEdit timer: disabledynamictick + useplatformtick | bcdedit (reboot required) |
-| 7 | NIC: interrupt moderation off, LSO off, flow control off, RSS pinned | Set-NetAdapterAdvancedProperty |
-| 8 | NIC power management off | Set-NetAdapterPowerManagement |
-| 9 | Psched QoS reservation removed | Registry |
-| 10 | Power throttling off | Registry (PowerThrottlingOff) |
-| 11 | FSO enforced, GameDVR / GameBar disabled | Registry (HKCU + HKLM policy) |
-| 12 | Visual effects → best performance | Registry (HKCU) |
-| 13 | GlobalTimerResolutionRequests = 1 | Registry (Windows 11 only) |
-| 14 | netsh TCP stack: ECN off, timestamps off, heuristics off | netsh |
+| 7 | Psched QoS reservation removed | Registry |
+| 8 | Power throttling off | Registry (PowerThrottlingOff) |
+| 9 | FSO enforced, GameDVR / GameBar disabled | Registry (HKCU + HKLM policy) |
+| 10 | Visual effects → best performance | Registry (HKCU) |
+| 11 | GlobalTimerResolutionRequests = 1 | Registry (Windows 11 only) |
+| 12 | netsh TCP stack: ECN off, timestamps off, heuristics off | netsh |
+
+> None of the core tweaks restart the network adapter. Default Enable/Disable runs are network-stable.
 
 **Opt-in flags**
 
@@ -105,7 +107,7 @@ override saved config. To reconfigure, just run `-Mode Init` again.
 |------|--------|
 | `-HardwareGpuScheduling` | HwSchMode = 2. Requires Turing/RDNA2+ GPU. Reboot required. |
 | `-EnableMsiMode` | MSI interrupt mode for GPU + NIC. Requires TrustedInstaller access on Enum keys. Reboot required. |
-| `-NicAdvancedTweaks` | Interrupt moderation off, LSO off, flow control off, RSS pin. **Causes a brief internet dropout** while the adapter restarts. On Wi-Fi this may take 30+ seconds. |
+| `-NicAdvancedTweaks` | Interrupt moderation off, LSO off, flow control off, RSS pin, NIC power management off. All changes applied then one controlled adapter restart. **Causes a brief internet dropout.** On Wi-Fi this may take 30+ seconds. |
 | `-DisableSysMain` | Stops and disables Superfetch. No benefit on NVMe; may help on SATA SSD/HDD. |
 | `-DisableCStates` | Forces static CPU V-F curve. Can reduce boost headroom on Zen 2+ / 10th-gen Intel+. Use with knowledge. |
 | `-IsolateNicIrq` | Full MSI-X IRQ affinity pin on NIC. Requires TrustedInstaller. RSS pinning applies regardless. |
@@ -138,7 +140,7 @@ The `-OutputFormat Json -Quiet` flags emit a single compressed JSON object
 to stdout for the bot to parse:
 
 ```json
-{"Success":true,"GamingMode":"Enabled","Message":"RawState active.","AppliedTweaks":["TCP","MMCSS","Win32Priority","Power","CoreParking","BCDEdit","NIC","NIC_PowerMgmt","Psched","PowerThrottle","FSO_GameDVR","VisualEffects","NetshTCP"],"RequiresReboot":true}
+{"Success":true,"GamingMode":"Enabled","Message":"RawState active.","AppliedTweaks":["TCP","MMCSS","Win32Priority","Power","CoreParking","BCDEdit","NIC","Psched","PowerThrottle","FSO_GameDVR","VisualEffects","GlobalTimer","NetshTCP"],"RequiresReboot":true}
 ```
 
 > **Important:** HKCU tweaks (GameDVR, FSO, VisualEffects, GameBar) only
