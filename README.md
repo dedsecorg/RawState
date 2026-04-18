@@ -159,4 +159,4 @@ State 1: honor system. You know who you are.
 
 ---
 
-*Built by Glenn Mesel / [dedsec.app](https://dedsec.app)*
+*Built by Glenn Mesel*
