@@ -242,7 +242,7 @@ function Invoke-Init {
     $irqCpu = 2
     if ($irq) {
         $cpuStr = Read-Host '  Target CPU index (0-63, default 2)'
-        if ($cpuStr -match '\d+' -and [int]$cpuStr -le 63) { $irqCpu = [int]$cpuStr }
+        if ($cpuStr -match '^\d+$' -and [int]$cpuStr -le 63) { $irqCpu = [int]$cpuStr }
     }
 
     Write-Host ''
