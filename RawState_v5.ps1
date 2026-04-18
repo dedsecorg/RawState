@@ -207,15 +207,16 @@ function Invoke-Prompt {
 
 function Apply-Config {
     # Merges saved config into script-level switches.
+    # Uses [switch]$true to ensure correct SwitchParameter type when overriding defaults.
     # Config only applies when the CLI switch was not explicitly provided (i.e. still $false).
     param($Config)
     if (-not $Config) { return }
-    if ($Config.disableCStates        -and -not $script:DisableCStates)        { $script:DisableCStates        = $true }
-    if ($Config.isolateNicIrq         -and -not $script:IsolateNicIrq)         { $script:IsolateNicIrq         = $true }
+    if ($Config.disableCStates        -and -not $script:DisableCStates)        { $script:DisableCStates        = [switch]$true }
+    if ($Config.isolateNicIrq         -and -not $script:IsolateNicIrq)         { $script:IsolateNicIrq         = [switch]$true }
     if ($null -ne $Config.irqTargetCpu -and $script:IrqTargetCpu -eq 2)        { $script:IrqTargetCpu          = [int]$Config.irqTargetCpu }
-    if ($Config.hardwareGpuScheduling -and -not $script:HardwareGpuScheduling) { $script:HardwareGpuScheduling = $true }
-    if ($Config.enableMsiMode         -and -not $script:EnableMsiMode)         { $script:EnableMsiMode         = $true }
-    if ($Config.disableSysMain        -and -not $script:DisableSysMain)        { $script:DisableSysMain        = $true }
+    if ($Config.hardwareGpuScheduling -and -not $script:HardwareGpuScheduling) { $script:HardwareGpuScheduling = [switch]$true }
+    if ($Config.enableMsiMode         -and -not $script:EnableMsiMode)         { $script:EnableMsiMode         = [switch]$true }
+    if ($Config.disableSysMain        -and -not $script:DisableSysMain)        { $script:DisableSysMain        = [switch]$true }
 }
 
 function Invoke-Init {
