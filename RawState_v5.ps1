@@ -567,13 +567,19 @@ function Set-NicTweaks {
             }
             try { Set-NetAdapterRss    -Name $a.Name -BaseProcessorNumber $IrqTargetCpu -ErrorAction SilentlyContinue } catch { }
             try { Enable-NetAdapterRss -Name $a.Name -ErrorAction SilentlyContinue } catch { }
+            # NIC power management — also adapter-touching; applied here so it is batched into the same restart below.
+            try {
+                Set-NetAdapterPowerManagement -Name $a.Name -WakeOnMagicPacket Disabled -WakeOnPattern Disabled -ErrorAction SilentlyContinue
+                try { Set-NetAdapterPowerManagement -Name $a.Name -D0PacketCoalescing Disabled -ErrorAction SilentlyContinue } catch { }
+            } catch { }
+            # Single controlled restart — batches all property changes into one adapter cycle.
             try {
                 Disable-NetAdapter -Name $a.Name -Confirm:$false -ErrorAction SilentlyContinue
                 Start-Sleep -Seconds 2
                 Enable-NetAdapter -Name $a.Name -ErrorAction SilentlyContinue
             } catch { Write-Warning "  Could not restart adapter '$($a.Name)': $_" }
         }
-        Write-Status "  [7]  NIC advanced tweaks applied (interrupt moderation off, LSO off, flow control off, RSS -> CPU $IrqTargetCpu). Adapter restarted once."
+        Write-Status "  [7]  NIC advanced tweaks applied (interrupt moderation off, LSO off, flow control off, RSS -> CPU $IrqTargetCpu, power management off). Single adapter restart."
     } else {
         Write-Status '  [7]  NIC advanced tweaks skipped (opt-in — run -Mode Init or pass -NicAdvancedTweaks to enable).'
     }
@@ -594,19 +600,6 @@ function Set-NicTweaks {
         }
     }
     return 'NIC'
-}
-
-function Set-NicPowerMgmtTweak {
-    $adapters = Get-PhysicalAdapters
-    if (-not $adapters) { return $null }
-    foreach ($a in $adapters) {
-        try {
-            Set-NetAdapterPowerManagement -Name $a.Name -WakeOnMagicPacket Disabled -WakeOnPattern Disabled -ErrorAction SilentlyContinue
-            try { Set-NetAdapterPowerManagement -Name $a.Name -D0PacketCoalescing Disabled -ErrorAction SilentlyContinue } catch { }
-        } catch { }
-    }
-    Write-Status '  [8]  NIC power management: WakeOnMagicPacket off, WakeOnPattern off, D0 coalescing off.'
-    return 'NIC_PowerMgmt'
 }
 
 function Set-PschedTweak {
@@ -752,7 +745,6 @@ function Invoke-Enable {
         (Set-CoreParkingTweak),
         (Set-BcdTweaks),
         (Set-NicTweaks         -NicAdvancedTweaks:$script:NicAdvancedTweaks -IsolateNicIrq:$script:IsolateNicIrq -IrqTargetCpu $script:IrqTargetCpu),
-        (Set-NicPowerMgmtTweak),
         (Set-PschedTweak),
         (Set-PowerThrottlingTweak),
         (Set-FsoAndGameDvrTweaks),
